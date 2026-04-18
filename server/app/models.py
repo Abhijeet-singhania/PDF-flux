@@ -30,6 +30,14 @@ class PostgresConnectRequest(BaseModel):
     user: str
     password: str
     dbname: str
+    type: Literal["postgres", "postgresql", "postgresql+psycopg", "mysql", "mysql8", "mysql+pymysql"] = "postgres"
+
+    @field_validator("type")
+    @classmethod
+    def normalize_db_type(cls, value: str) -> str:
+        if value in {"postgres", "postgresql", "postgresql+psycopg"}:
+            return "postgresql+psycopg"
+        return "mysql+pymysql"
 
     # Keep backward-compat: old clients that sent `type` instead of `connector`
     # are handled at the router level.
@@ -75,6 +83,16 @@ class DBConnectResponse(BaseModel):
     success: bool
     connectionId: str
     tables: list[DBTableInfo]
+
+
+class CreateTableRequest(BaseModel):
+    connectionId: str
+    schema: TableSchema
+
+
+class CreateTableResponse(BaseModel):
+    success: bool
+    table: DBTableInfo
 
 
 class PDFUploadResponse(BaseModel):

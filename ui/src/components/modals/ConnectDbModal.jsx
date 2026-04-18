@@ -1,7 +1,12 @@
 import { Database, Loader2, X, CheckCircle2, Trash2 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
-const INITIAL_PG_FORM = { connector: "postgres", host: "localhost", port: "5432", dbname: "my_database", user: "postgres", password: "" };
+const DB_TYPES = [
+  { id: "postgresql", label: "PostgreSQL", defaultPort: "5432", defaultUser: "postgres" },
+  { id: "mysql", label: "MySQL", defaultPort: "3306", defaultUser: "root" }
+];
+
+const INITIAL_PG_FORM = { connector: "postgres", type: "postgresql", host: "localhost", port: "5432", dbname: "my_database", user: "postgres", password: "" };
 const INITIAL_SB_FORM = { connector: "supabase", supabase_url: "", supabase_key: "" };
 const STORAGE_KEY = "saved_db_connections";
 
@@ -12,14 +17,15 @@ function loadSaved() {
 function connKey(form) {
   return form.connector === "supabase"
     ? `supabase:${form.supabase_url}`
-    : `${form.host}:${form.port}/${form.dbname}`;
+    : `${form.type || "postgresql"}:${form.host}:${form.port}/${form.dbname}`;
 }
 
 function saveToPersist(form) {
   const list = loadSaved();
-  const key = connKey(form);
-  const existing = list.findIndex(c => connKey(c) === key);
-  const entry = { ...form, id: key, savedAt: new Date().toISOString() };
+  const normalizedForm = form.connector === "supabase" ? form : { ...INITIAL_PG_FORM, ...form };
+  const key = connKey(normalizedForm);
+  const existing = list.findIndex((connection) => connKey(connection) === key);
+  const entry = { ...normalizedForm, id: key, savedAt: new Date().toISOString() };
   if (existing >= 0) list[existing] = entry; else list.unshift(entry);
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, 10)));
 }
@@ -39,12 +45,25 @@ export function ConnectDbModal({ onClose, onSave, onTest, activeDbLabel }) {
 
   useEffect(() => { setSavedConns(loadSaved()); }, []);
 
-  async function submit(action) {
+  function handleTypeSelect(typeId) {
+    const selectedType = DB_TYPES.find((item) => item.id === typeId);
+    if (!selectedType) return;
+
+    setForm((prev) => ({
+      ...prev,
+      type: selectedType.id,
+      port: selectedType.defaultPort,
+      user: selectedType.defaultUser
+    }));
+  }
+
+  async function submit(action, nextForm = form) {
     setLoading(true); setError(""); setStatus("");
     try {
-      const result = await action(form);
+      const result = await action(nextForm);
+      setForm(nextForm);
       setStatus(`Connected — ${(result.tables || []).length} tables found`);
-      saveToPersist(form);
+      saveToPersist(nextForm);
       setSavedConns(loadSaved());
       return result;
     } catch (err) {
@@ -105,10 +124,24 @@ export function ConnectDbModal({ onClose, onSave, onTest, activeDbLabel }) {
               <div key={c.id} style={{ border: "1px solid #2a3347", borderRadius: "10px", padding: "10px 12px", background: "#0d1120", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "10px" }}>
                 <div>
                   <strong style={{ fontSize: "13px" }}>{savedLabel(c)}</strong>
+                  {c.connector !== "supabase" && (
+                    <span style={{ display: "block", fontSize: "11px", color: "#3dd7b1", marginTop: "2px" }}>
+                      {(c.type || "postgresql").toUpperCase()}
+                    </span>
+                  )}
                   <span style={{ display: "block", fontSize: "11px", color: "#7a85a0", marginTop: "2px" }}>{savedSublabel(c)}</span>
                 </div>
                 <div style={{ display: "flex", gap: "6px" }}>
-                  <button className="ghost-btn compact" onClick={async () => { loadSavedConn(c); const r = await submit(onSave); if (r) onClose(); }} disabled={loading}>
+                  <button
+                    className="ghost-btn compact"
+                    onClick={async () => {
+                      const nextForm = c.connector === "supabase" ? { ...INITIAL_SB_FORM, ...c } : { ...INITIAL_PG_FORM, ...c };
+                      loadSavedConn(nextForm);
+                      const r = await submit(onSave, nextForm);
+                      if (r) onClose();
+                    }}
+                    disabled={loading}
+                  >
                     <CheckCircle2 size={13} /> Connect
                   </button>
                   <button className="icon-btn" onClick={() => deleteConn(c.id)} title="Remove"><Trash2 size={13} /></button>
@@ -128,7 +161,7 @@ export function ConnectDbModal({ onClose, onSave, onTest, activeDbLabel }) {
                 className={`db-type ${connectorType === "postgres" ? "active" : ""}`}
                 onClick={() => { setConnectorType("postgres"); setStatus(""); setError(""); }}
               >
-                <Database size={14} /> PostgreSQL
+                <Database size={14} /> SQL Database
               </button>
               <button
                 type="button"
@@ -138,6 +171,24 @@ export function ConnectDbModal({ onClose, onSave, onTest, activeDbLabel }) {
                 <Database size={14} /> Supabase
               </button>
             </div>
+
+            {connectorType === "postgres" && (
+              <>
+                <label className="field-label">DATABASE ENGINE</label>
+                <div className="db-type-grid">
+                  {DB_TYPES.map((type) => (
+                    <button
+                      key={type.id}
+                      className={`db-type ${pgForm.type === type.id ? "active" : ""}`}
+                      type="button"
+                      onClick={() => handleTypeSelect(type.id)}
+                    >
+                      <Database size={14} />{type.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
             {connectorType === "postgres" && (
               <>

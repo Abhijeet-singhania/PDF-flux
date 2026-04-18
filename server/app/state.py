@@ -9,6 +9,7 @@ from typing import Any
 class DBConnectionConfig:
     connection_id: str
     url: str
+    db_type: str = "postgresql+psycopg"
     connector: str = "postgres"          # "postgres" | "supabase"
     supabase_url: str | None = None      # Supabase project URL
     supabase_key: str | None = None      # Supabase API key

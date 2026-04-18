@@ -3,60 +3,74 @@ from __future__ import annotations
 from urllib.parse import quote_plus
 
 import httpx
-from sqlalchemy import create_engine, text
+from sqlalchemy import Boolean, Column, Date, Float, Integer, MetaData, String, Table, create_engine, inspect, text
 from sqlalchemy.engine import Engine
 
-from app.models import DBTableInfo
+from app.models import DBColumnInfo, DBTableInfo, TableSchema, normalize_schema_type
 
 
 # ---------------------------------------------------------------------------
-# PostgreSQL helpers (unchanged)
+# Connection helpers
 # ---------------------------------------------------------------------------
 
-def build_postgres_url(host: str, port: int, user: str, password: str, dbname: str) -> str:
-    return (
-        f"postgresql+psycopg://{quote_plus(user)}:{quote_plus(password)}"
-        f"@{host}:{port}/{quote_plus(dbname)}"
-    )
+def build_database_url(db_type: str, host: str, port: int, user: str, password: str, dbname: str) -> str:
+    if db_type == "postgresql+psycopg":
+        return (
+            f"postgresql+psycopg://{quote_plus(user)}:{quote_plus(password)}"
+            f"@{host}:{port}/{quote_plus(dbname)}"
+        )
+    if db_type == "mysql+pymysql":
+        return (
+            f"mysql+pymysql://{quote_plus(user)}:{quote_plus(password)}"
+            f"@{host}:{port}/{quote_plus(dbname)}"
+        )
+    raise ValueError(f"Unsupported database type: {db_type}")
 
 
 def create_db_engine(url: str) -> Engine:
     return create_engine(url, pool_pre_ping=True, future=True)
 
 
-def introspect_public_tables(engine: Engine) -> list[DBTableInfo]:
-    tables_sql = text(
-        """
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema = 'public'
-          AND table_type = 'BASE TABLE'
-        ORDER BY table_name;
-        """
-    )
-    columns_sql = text(
-        """
-        SELECT column_name, data_type
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = :table_name
-        ORDER BY ordinal_position;
-        """
-    )
+def _get_schema_name(engine: Engine) -> str | None:
+    inspector = inspect(engine)
+    if engine.dialect.name == "postgresql":
+        return "public"
+    return inspector.default_schema_name
 
+
+def _to_sqlalchemy_type(schema_type: str):
+    normalized = normalize_schema_type(schema_type)
+    if normalized == "text":
+        return String()
+    if normalized == "int":
+        return Integer()
+    if normalized == "float":
+        return Float()
+    if normalized == "date":
+        return Date()
+    if normalized == "boolean":
+        return Boolean()
+    raise ValueError(f"Unsupported schema type: {schema_type}")
+
+
+def introspect_tables(engine: Engine) -> list[DBTableInfo]:
+    inspector = inspect(engine)
+    schema = _get_schema_name(engine)
     output: list[DBTableInfo] = []
-    with engine.connect() as conn:
-        table_names = [row[0] for row in conn.execute(tables_sql).fetchall()]
-        for table_name in table_names:
-            columns = [
-                {"name": row[0], "type": row[1]}
-                for row in conn.execute(columns_sql, {"table_name": table_name}).fetchall()
-            ]
-            output.append(DBTableInfo(name=table_name, columns=columns))
+
+    for table_name in inspector.get_table_names(schema=schema):
+        columns = [
+            DBColumnInfo(name=column["name"], type=str(column["type"]))
+            for column in inspector.get_columns(table_name, schema=schema)
+        ]
+        output.append(DBTableInfo(name=table_name, columns=columns))
 
     return output
 
 
+# ---------------------------------------------------------------------------
+# Supabase helpers
+# ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
 # Supabase helpers
 # ---------------------------------------------------------------------------
@@ -221,4 +235,30 @@ def get_supabase_foreign_keys(supabase_url: str, supabase_key: str, table_name: 
             
     return fk_list
 
+def create_table_from_schema(engine: Engine, schema_definition: TableSchema) -> DBTableInfo:
+    metadata = MetaData()
+    schema = _get_schema_name(engine)
+    inspector = inspect(engine)
+
+    if inspector.has_table(schema_definition.table, schema=schema):
+        raise ValueError(f"Table '{schema_definition.table}' already exists")
+
+    table = Table(
+        schema_definition.table,
+        metadata,
+        *[
+            Column(column.name, _to_sqlalchemy_type(column.type), nullable=True)
+            for column in schema_definition.columns
+        ],
+        schema=schema,
+    )
+    metadata.create_all(engine, tables=[table])
+
+    return DBTableInfo(
+        name=schema_definition.table,
+        columns=[
+            DBColumnInfo(name=column.name, type=str(column.type))
+            for column in schema_definition.columns
+        ],
+    )
 

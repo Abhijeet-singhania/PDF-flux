@@ -4,13 +4,20 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.models import DBConnectResponse, PostgresConnectRequest, SupabaseConnectRequest
+from app.models import (
+    CreateTableRequest,
+    CreateTableResponse,
+    DBConnectResponse,
+    PostgresConnectRequest,
+    SupabaseConnectRequest
+)
 from app.services.db_service import (
-    build_postgres_url,
+    build_database_url,
     build_supabase_client,
     create_db_engine,
-    introspect_public_tables,
+    create_table_from_schema,
     introspect_supabase_tables,
+    introspect_tables,
 )
 from app.state import DBConnectionConfig, db_connections
 
@@ -31,7 +38,6 @@ async def connect_db(request: Request) -> DBConnectResponse:
     connector = body.get("connector", "postgres")
 
     connection_id = str(uuid.uuid4())
-
     # ------------------------------------------------------------------
     # Supabase path
     # ------------------------------------------------------------------
@@ -63,7 +69,8 @@ async def connect_db(request: Request) -> DBConnectResponse:
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    db_url = build_postgres_url(
+    db_url = build_database_url(
+        db_type=payload.type,
         host=payload.host,
         port=payload.port,
         user=payload.user,
@@ -73,7 +80,7 @@ async def connect_db(request: Request) -> DBConnectResponse:
 
     try:
         engine = create_db_engine(db_url)
-        tables = introspect_public_tables(engine)
+        tables = introspect_tables(engine)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Database connection failed: {exc}") from exc
     finally:
@@ -85,6 +92,28 @@ async def connect_db(request: Request) -> DBConnectResponse:
     db_connections[connection_id] = DBConnectionConfig(
         connection_id=connection_id,
         url=db_url,
+        db_type=payload.type,
         connector="postgres",
     )
     return DBConnectResponse(success=True, connectionId=connection_id, tables=tables)
+
+
+@router.post("/tables", response_model=CreateTableResponse)
+def create_table(payload: CreateTableRequest) -> CreateTableResponse:
+    conn = db_connections.get(payload.connectionId)
+    if conn is None:
+        raise HTTPException(status_code=404, detail="connectionId not found")
+
+    engine = create_db_engine(conn.url)
+
+    try:
+        table = create_table_from_schema(engine, payload.schema)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to create table: {exc}") from exc
+    finally:
+        engine.dispose()
+
+    return CreateTableResponse(success=True, table=table)
+

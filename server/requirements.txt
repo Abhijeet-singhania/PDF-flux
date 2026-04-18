@@ -7,3 +7,9 @@ pdfplumber==0.11.7
 anthropic==0.64.0
 pydantic==2.11.7
 supabase>=2.0.0
+python-dotenv==1.1.1
+httpx==0.28.1
+groq==0.31.0
+openai==1.99.9
+google-generativeai==0.8.5
+PyMySQL==1.1.1
