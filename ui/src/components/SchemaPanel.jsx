@@ -1,4 +1,5 @@
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Link, Check, X } from "lucide-react";
+import { useState } from "react";
 
 const TYPES = ["text", "int", "float", "date", "boolean"];
 
@@ -12,8 +13,14 @@ export function SchemaPanel({
   onManualTableNameChange,
   columns,
   onColumnsChange,
-  onAiSuggest
+  onAiSuggest,
+  fkMappings = {},
+  fkSelections = {},
+  onPickFk,
+  onAddManualFkMapping
 }) {
+  const [linkingColIndex, setLinkingColIndex] = useState(null);
+
   function updateColumn(index, key, value) {
     onColumnsChange(columns.map((column, i) => (i === index ? { ...column, [key]: value } : column)));
   }
@@ -63,25 +70,87 @@ export function SchemaPanel({
 
       <label className="field-label">COLUMNS</label>
       <div className="column-list">
-        {columns.map((column, index) => (
-          <div className="column-item" key={`${column.name}-${index}`}>
-            <input
-              value={column.name}
-              onChange={(event) => updateColumn(index, "name", event.target.value)}
-              placeholder="column_name"
-            />
-            <select value={column.type} onChange={(event) => updateColumn(index, "type", event.target.value)}>
-              {TYPES.map((type) => (
-                <option key={type} value={type}>
-                  {type}
-                </option>
-              ))}
-            </select>
-            <button type="button" className="icon-btn column-remove" onClick={() => removeColumn(index)}>
-              <Trash2 size={13} />
-            </button>
-          </div>
-        ))}
+        {columns.map((column, index) => {
+          const isFk = !!fkMappings[column.name];
+          const hasSelectedFk = isFk && fkSelections[column.name] !== undefined;
+
+          return (
+            <div className="column-item" key={`${column.name}-${index}`} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                value={column.name}
+                onChange={(event) => updateColumn(index, "name", event.target.value)}
+                placeholder="column_name"
+                disabled={isFk}
+                style={{ opacity: isFk ? 0.7 : 1 }}
+              />
+              {!isFk && linkingColIndex !== index && (
+                <>
+                  <select value={column.type} onChange={(event) => updateColumn(index, "type", event.target.value)}>
+                    {TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                  <button type="button" className="icon-btn" onClick={() => setLinkingColIndex(index)} title="Link to Table">
+                    <Link size={13} />
+                  </button>
+                </>
+              )}
+              {!isFk && linkingColIndex === index && (
+                <div style={{ display: 'flex', flex: 1, gap: '4px', alignItems: 'center' }}>
+                  <select
+                    className="field"
+                    style={{ padding: '0px 4px', height: '100%', fontSize: '12px' }}
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        onAddManualFkMapping(column.name, e.target.value);
+                        setLinkingColIndex(null);
+                      }
+                    }}
+                  >
+                    <option value="">Ref Table...</option>
+                    {tables.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}
+                  </select>
+                  <button type="button" className="icon-btn" onClick={() => setLinkingColIndex(null)}>
+                    <X size={13} />
+                  </button>
+                </div>
+              )}
+              {isFk && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: 1 }}>
+                  <span title={`Reference: ${fkMappings[column.name].referenced_table}`} style={{ display: 'flex', alignItems: 'center', color: '#ffb347' }}>
+                    <Link size={14} style={{ marginRight: '4px' }} />
+                  </span>
+                  {!hasSelectedFk ? (
+                    <button
+                      type="button"
+                      className="ghost-btn compact"
+                      style={{ padding: '4px 8px', borderColor: '#ffb347', color: '#ffb347' }}
+                      onClick={() => onPickFk(column.name)}
+                    >
+                      Pick
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="ghost-btn compact"
+                      style={{ padding: '4px 8px', borderColor: '#3dd7b1', color: '#3dd7b1', flex: 1, justifyContent: 'flex-start', overflow: 'hidden' }}
+                      onClick={() => onPickFk(column.name)}
+                    >
+                      <Check size={14} style={{ marginRight: '4px' }} /> {String(fkSelections[column.name])}
+                    </button>
+                  )}
+                </div>
+              )}
+              {!hasSelectedFk && ( // Prevent removing bounded FK cols unless they want to remove entirely
+                <button type="button" className="icon-btn column-remove" onClick={() => removeColumn(index)}>
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <button className="ghost-btn full" type="button" onClick={addColumn}>

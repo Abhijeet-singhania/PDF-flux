@@ -51,3 +51,13 @@ export async function insertRows(payload) {
   });
   return parseResponse(response);
 }
+
+export async function fetchForeignKeys(connectionId, table) {
+  const response = await fetch(`${API_BASE}/api/db/${connectionId}/foreign-keys?table=${encodeURIComponent(table)}`);
+  return parseResponse(response);
+}
+
+export async function fetchTableRows(connectionId, table, limit = 200) {
+  const response = await fetch(`${API_BASE}/api/db/${connectionId}/table-rows?table=${encodeURIComponent(table)}&limit=${limit}`);
+  return parseResponse(response);
+}

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, useEffect } from "react";
-import { connectDb, extractRows, insertRows, uploadPdf, fetchPdfPreview } from "./api";
+import { connectDb, extractRows, insertRows, uploadPdf, fetchPdfPreview, fetchForeignKeys } from "./api";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { DocumentPanel } from "./components/DocumentPanel";
@@ -10,6 +10,8 @@ import { ProgressModal } from "./components/modals/ProgressModal";
 import { SuccessOverlay } from "./components/modals/SuccessOverlay";
 import { AiSettingsModal } from "./components/modals/AiSettingsModal";
 import { HistoryPanelView } from "./components/HistoryPanelView";
+import { FKPickerModal } from "./components/modals/FKPickerModal";
+import { DataExplorerView } from "./components/views/DataExplorerView";
 
 const STEP_ITEMS = [
   "Text extracted from PDF",
@@ -93,6 +95,10 @@ export default function App() {
   const [activeHistoryItem, setActiveHistoryItem] = useState(null);
   const timerRef = useRef(null);
 
+  const [fkMappings, setFkMappings] = useState({});
+  const [fkSelections, setFkSelections] = useState({});
+  const [fkPickTarget, setFkPickTarget] = useState(null);
+
   useEffect(() => {
     try {
       setHistoryItems(JSON.parse(localStorage.getItem('pdf_extraction_history') || '[]'));
@@ -131,33 +137,61 @@ export default function App() {
     return indexed.filter((row) => warningRowIndexes.has(row.__index));
   }, [rows, filterWarningsOnly, warningRowIndexes]);
 
-  function applyTableSelection(tableName, tables) {
+  function applyTableSelection(tableName, tables, explicitConnectionId = null) {
     const table = tables.find((item) => item.name === tableName);
     setSelectedTable(tableName);
+    setFkSelections({});
     if (table?.columns?.length) {
       setSchemaColumns(normalizeColumns(table.columns));
+    }
+    const targetConnId = explicitConnectionId || dbState.connectionId;
+    if (tableName && targetConnId) {
+      fetchForeignKeys(targetConnId, tableName)
+        .then(fks => {
+          const mappings = {};
+          fks.forEach(fk => { mappings[fk.fk_column] = fk; });
+          setFkMappings(mappings);
+        })
+        .catch(err => console.error("Failed to fetch FKs", err));
+    } else {
+      setFkMappings({});
     }
   }
 
   async function handleDbConnect(formValues) {
-    const payload = {
-      host: formValues.host,
-      port: Number(formValues.port),
-      user: formValues.user,
-      password: formValues.password,
-      dbname: formValues.dbname,
-      type: "postgresql"
-    };
+    // Build the correct payload based on connector type
+    let payload;
+    if (formValues.connector === "supabase") {
+      payload = {
+        connector: "supabase",
+        supabase_url: formValues.supabase_url,
+        supabase_key: formValues.supabase_key,
+      };
+    } else {
+      payload = {
+        connector: "postgres",
+        host: formValues.host,
+        port: Number(formValues.port),
+        user: formValues.user,
+        password: formValues.password,
+        dbname: formValues.dbname,
+      };
+    }
+
     const result = await connectDb(payload);
     const firstTable = result.tables?.[0]?.name || "";
+    const label = formValues.connector === "supabase"
+      ? (() => { try { return new URL(formValues.supabase_url).hostname; } catch { return "Supabase"; } })()
+      : formValues.dbname;
+
     setDbState({
       connected: true,
       connectionId: result.connectionId,
       tables: result.tables || [],
-      label: formValues.dbname
+      label,
     });
     if (firstTable) {
-      applyTableSelection(firstTable, result.tables || []);
+      applyTableSelection(firstTable, result.tables || [], result.connectionId);
     }
     return result;
   }
@@ -204,7 +238,7 @@ export default function App() {
     setInsertResult(null);
     setUsageStats(null);
     if (!dbState.connectionId) {
-      setExtractError("Connect a PostgreSQL database first.");
+      setExtractError("Connect a database first.");
       setShowDbModal(true);
       return;
     }
@@ -217,7 +251,7 @@ export default function App() {
       return;
     }
 
-    const validColumns = schemaColumns.filter((column) => column.name.trim());
+    const validColumns = schemaColumns.filter((column) => column.name.trim() && fkSelections[column.name] === undefined);
     if (!validColumns.length) {
       setExtractError("Define at least one schema column.");
       return;
@@ -285,7 +319,7 @@ export default function App() {
       const result = await insertRows({
         connectionId: dbState.connectionId,
         table: tableForInsert,
-        rows,
+        rows: rows.map(r => ({ ...r, ...fkSelections })),
         mode: "insert"
       });
       setInsertResult(result);
@@ -378,6 +412,8 @@ export default function App() {
         activeHistoryId={activeHistoryItem?.id}
         activeStep={activeStepIndex}
         isExtracting={isExtracting}
+        appView={appView}
+        onAppViewChange={setAppView}
         onSelectHistoryItem={(item) => {
           setActiveHistoryItem(item);
           setAppView("history");
@@ -411,6 +447,13 @@ export default function App() {
             </div>
             <HistoryPanelView item={activeHistoryItem} />
           </div>
+        ) : appView === "explorer" ? (
+          <DataExplorerView
+            dbConnected={dbState.connected}
+            connectionId={dbState.connectionId}
+            tables={dbState.tables}
+            onOpenDbModal={() => setShowDbModal(true)}
+          />
         ) : (
           <section className="content-grid">
             <DocumentPanel pdfState={pdfState} onUpload={handleUpload} pageSnippets={pageSnippets} />
@@ -425,6 +468,15 @@ export default function App() {
               columns={schemaColumns}
               onColumnsChange={setSchemaColumns}
               onAiSuggest={handleAiSuggestSchema}
+              fkMappings={fkMappings}
+              fkSelections={fkSelections}
+              onPickFk={(colName) => setFkPickTarget(colName)}
+              onAddManualFkMapping={(colName, refTable) => {
+                setFkMappings(prev => ({
+                  ...prev,
+                  [colName]: { fk_column: colName, referenced_table: refTable, referenced_column: null }
+                }));
+              }}
             />
             <DataTablePanel
               rows={displayedRows}
@@ -485,6 +537,19 @@ export default function App() {
       ) : null}
 
       {showSuccess ? <SuccessOverlay rowCount={rows.length} onDismiss={() => setShowSuccess(false)} /> : null}
+
+      {fkPickTarget ? (
+        <FKPickerModal
+          connectionId={dbState.connectionId}
+          referencedTable={fkMappings[fkPickTarget]?.referenced_table}
+          referencedColumn={fkMappings[fkPickTarget]?.referenced_column}
+          onSelect={(value) => {
+            setFkSelections(prev => ({ ...prev, [fkPickTarget]: value }));
+            setFkPickTarget(null);
+          }}
+          onClose={() => setFkPickTarget(null)}
+        />
+      ) : null}
     </div>
   );
 }

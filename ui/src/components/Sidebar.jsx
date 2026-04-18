@@ -24,7 +24,9 @@ export function Sidebar({
   activeHistoryId,
   onSelectHistoryItem,
   activeStep = 0,
-  isExtracting = false
+  isExtracting = false,
+  appView,
+  onAppViewChange
 }) {
   return (
     <aside className="sidebar">
@@ -54,6 +56,33 @@ export function Sidebar({
           );
         })}
       </ul>
+
+      <p className="sidebar-heading">NAVIGATION</p>
+      <div style={{ padding: "0 12px", marginBottom: "16px" }}>
+        <button
+          className="run-btn full"
+          style={{
+            background: appView === "explorer" ? "#b7ef00" : "#1a2233",
+            color: appView === "explorer" ? "#06080e" : "#f0f2f5",
+            justifyContent: "flex-start"
+          }}
+          onClick={() => onAppViewChange("explorer")}
+        >
+          <Database size={15} style={{ marginRight: "10px" }} /> Data Explorer
+        </button>
+        <button
+          className="run-btn full"
+          style={{
+            marginTop: "8px",
+            background: appView === "extractor" ? "#b7ef00" : "#1a2233",
+            color: appView === "extractor" ? "#06080e" : "#f0f2f5",
+            justifyContent: "flex-start"
+          }}
+          onClick={() => onAppViewChange("extractor")}
+        >
+          <WandSparkles size={15} style={{ marginRight: "10px" }} /> Extraction Studio
+        </button>
+      </div>
 
       <p className="sidebar-heading">RECENT HISTORIES</p>
       <div className="recent-list" style={{ maxHeight: "220px", overflowY: "auto", overflowX: "hidden" }}>
