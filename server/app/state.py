@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -9,6 +9,9 @@ from typing import Any
 class DBConnectionConfig:
     connection_id: str
     url: str
+    connector: str = "postgres"          # "postgres" | "supabase"
+    supabase_url: str | None = None      # Supabase project URL
+    supabase_key: str | None = None      # Supabase API key
 
 
 @dataclass
@@ -22,4 +25,3 @@ db_connections: dict[str, DBConnectionConfig] = {}
 uploaded_pdfs: dict[str, StoredPDF] = {}
 last_connection_id: str | None = None
 jobs: dict[str, dict[str, Any]] = {}
-

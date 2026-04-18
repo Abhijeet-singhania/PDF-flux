@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -19,18 +19,46 @@ class TableSchema(BaseModel):
     columns: list[ColumnSchema] = Field(min_length=1)
 
 
-class DBConnectRequest(BaseModel):
+# ---------------------------------------------------------------------------
+# DB connection request — discriminated union on `connector`
+# ---------------------------------------------------------------------------
+
+class PostgresConnectRequest(BaseModel):
+    connector: Literal["postgres"] = "postgres"
     host: str
     port: int
     user: str
     password: str
     dbname: str
-    type: Literal["postgres", "postgresql", "postgresql+psycopg"]
 
-    @field_validator("type")
-    @classmethod
-    def normalize_db_type(cls, value: str) -> str:
-        return "postgresql+psycopg"
+    # Keep backward-compat: old clients that sent `type` instead of `connector`
+    # are handled at the router level.
+
+
+class SupabaseConnectRequest(BaseModel):
+    connector: Literal["supabase"] = "supabase"
+    supabase_url: str = Field(description="Supabase project URL, e.g. https://xxxx.supabase.co")
+    supabase_key: str = Field(description="Supabase anon or service-role API key")
+
+
+DBConnectRequest = Annotated[
+    Union[PostgresConnectRequest, SupabaseConnectRequest],
+    Field(discriminator="connector"),
+]
+
+
+# ---------------------------------------------------------------------------
+# Legacy alias so existing imports don't break immediately
+# ---------------------------------------------------------------------------
+class _LegacyDBConnectRequest(BaseModel):
+    """Accepted when connector/type is missing — treated as postgres."""
+    host: str
+    port: int
+    user: str
+    password: str
+    dbname: str
+    # Accept the old `type` field silently
+    type: str | None = None
 
 
 class DBColumnInfo(BaseModel):
@@ -153,4 +181,3 @@ def coerce_value(value: Any, schema_type: str) -> Any:
         return date.fromisoformat(text)
 
     raise ValueError(f"unsupported schema type: {schema_type}")
-
