@@ -14,6 +14,14 @@ from app.models import DBColumnInfo, DBTableInfo, TableSchema, normalize_schema_
 # ---------------------------------------------------------------------------
 
 def build_database_url(db_type: str, host: str, port: int, user: str, password: str, dbname: str) -> str:
+    # Normalize short aliases sent by the frontend
+    _aliases: dict[str, str] = {
+        "postgresql": "postgresql+psycopg",
+        "postgres":   "postgresql+psycopg",
+        "mysql":      "mysql+pymysql",
+    }
+    db_type = _aliases.get(db_type, db_type)
+
     if db_type == "postgresql+psycopg":
         return (
             f"postgresql+psycopg://{quote_plus(user)}:{quote_plus(password)}"
